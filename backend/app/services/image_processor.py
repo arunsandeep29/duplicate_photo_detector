@@ -416,10 +416,12 @@ def compute_blur_score(image: Image.Image) -> float:
         return 0.0
 
 
-def is_blurred(image: Image.Image, threshold: float = 100.0) -> Tuple[bool, float]:
+def is_blurred(image: Image.Image, threshold: float = 2000.0) -> Tuple[bool, float]:
     """Return (is_blurred, score). Lower score -> more blurred.
 
-    Default threshold=100.0 is conservative; callers may tune this value.
+    Default threshold=2000.0 chosen to work with the edge-variance heuristic used
+    in compute_blur_score. Callers may tune this value via app_config when
+    collecting metadata.
     """
     score = compute_blur_score(image)
     return (score < threshold, score)
@@ -463,11 +465,11 @@ def get_image_metadata(
         if thumb_size is None:
             thumb_size = tuple(app_config.get("THUMBNAIL_SIZE", (200, 200)))
         if blur_threshold is None:
-            blur_threshold = float(app_config.get("BLUR_THRESHOLD", 100.0))
+            blur_threshold = float(app_config.get("BLUR_THRESHOLD", 2000.0))
     if thumb_size is None:
         thumb_size = (200, 200)
     if blur_threshold is None:
-        blur_threshold = 100.0
+        blur_threshold = 2000.0
 
     meta: Dict[str, Any] = {
         "resolution": None,

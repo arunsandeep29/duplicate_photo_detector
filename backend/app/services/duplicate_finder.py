@@ -191,10 +191,10 @@ def find_duplicates(
                     file_metas[f] = meta
 
             # Choose original = file with highest quality_score. Tie-break lexicographically
+            # Sort by quality_score desc, then path asc to break ties predictably
             sorted_files = sorted(
                 group_files,
-                key=lambda p: (file_metas.get(p, {}).get("quality_score", 0.0), p),
-                reverse=True,
+                key=lambda p: (-file_metas.get(p, {}).get("quality_score", 0.0), p),
             )
             original = sorted_files[0]
             copies = [p for p in group_files if p != original]
