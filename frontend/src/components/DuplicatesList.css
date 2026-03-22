@@ -267,6 +267,16 @@
   border: 1px dashed #bbb;
 }
 
+/* Highlight the highest-quality image */
+.original-highlight .thumbnail {
+  border-color: #27ae60;
+  box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.08);
+}
+
+.original-highlight .file-name {
+  color: #27ae60;
+}
+
 .blurred-copies-section {
   margin-top: 1rem;
 }

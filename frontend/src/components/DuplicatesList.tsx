@@ -19,21 +19,12 @@ const DuplicatesList: React.FC<DuplicatesListProps> = ({
 }) => {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
-  const truncatePath = (path: string): string => {
-    const maxLength = 60;
-    if (path.length > maxLength) {
-      const start = path.substring(0, 20);
-      const end = path.substring(path.length - 30);
-      return `${start}...${end}`;
-    }
-    return path;
-  };
-
   const getFileName = (path: string): string => {
     return path.split('/').pop() || path;
   };
 
-  const allCopies = groups.flatMap((g) => g.copies);
+  // Flatten copy paths for selection operations
+  const allCopies = groups.flatMap((g) => g.copies.map((c) => c.path));
 
   const handleFileSelect = useCallback(
     (filePath: string) => {
@@ -132,10 +123,22 @@ const DuplicatesList: React.FC<DuplicatesListProps> = ({
 
       <div className="groups-container">
         {groups.map((group, groupIndex) => {
-          const groupCopies = group.copies;
+          const groupCopies = group.copies.map((c) => c.path);
           const groupSelectedCount = groupCopies.filter((c) => selectedFiles.has(c)).length;
           const groupAllSelected = groupSelectedCount === groupCopies.length && groupCopies.length > 0;
           const groupPartially = groupSelectedCount > 0 && groupSelectedCount < groupCopies.length;
+
+          // Determine highest-quality image among original + copies
+          const images = [
+            { path: group.original.path, preview_url: group.original.preview_url, quality_score: group.original.quality_score, isOriginal: true },
+            ...group.copies.map((c) => ({ path: c.path, preview_url: c.preview_url, quality_score: c.quality_score, reason: c.reason, isOriginal: false })),
+          ];
+
+          const bestImage = images.reduce((best, curr) => {
+            const bestScore = typeof best.quality_score === 'number' ? best.quality_score : -Infinity;
+            const currScore = typeof curr.quality_score === 'number' ? curr.quality_score : -Infinity;
+            return currScore > bestScore ? curr : best;
+          }, images[0]);
 
           return (
             <div key={`${group.hash}-${groupIndex}`} className="duplicate-group-card">
@@ -166,32 +169,93 @@ const DuplicatesList: React.FC<DuplicatesListProps> = ({
               <div className="group-content">
                 <div className="original-file-section">
                   <h4 className="section-title">Original File</h4>
-                  <div className="file-path" title={group.original}>
-                    <span className="file-icon" aria-hidden="true">📄</span>
-                    <span className="path-text">{truncatePath(group.original)}</span>
+
+                  <div className={`original-thumb-meta ${bestImage.path === group.original.path ? 'original-highlight' : ''}`}>
+                    {group.original.preview_url ? (
+                      <a href={group.original.preview_url} target="_blank" rel="noopener noreferrer">
+                        <img
+                          className="thumbnail"
+                          src={group.original.preview_url}
+                          alt={getFileName(group.original.path)}
+                          onError={(e) => {
+                            const img = e.currentTarget as HTMLImageElement;
+                            img.onerror = null;
+                            img.src = '';
+                            img.classList.add('placeholder');
+                          }}
+                        />
+                      </a>
+                    ) : (
+                      <div className="thumbnail placeholder" role="img" aria-label={`No preview for ${getFileName(group.original.path)}`}>
+                        📄
+                      </div>
+                    )}
+
+                    <div className="original-meta">
+                      <div className="file-name-row">
+                        <p className="file-name" title={group.original.path}>{getFileName(group.original.path)}</p>
+                        {bestImage.path === group.original.path && <span className="badge original">Original</span>}
+                      </div>
+                      <div className="meta-row">
+                        <span className="meta resolution">{group.original.quality_score ? `Quality: ${group.original.quality_score}` : ''}</span>
+                      </div>
+                    </div>
                   </div>
-                  <p className="file-name">{getFileName(group.original)}</p>
                 </div>
 
                 <div className="copies-section">
                   <h4 className="section-title">Duplicate Copies</h4>
                   <ul className="copies-list" role="list">
                     {group.copies.map((copy, copyIndex) => (
-                      <li key={`${copy}-${copyIndex}`} className="copy-item">
-                        <label className="copy-label">
-                          <input
-                            type="checkbox"
-                            checked={selectedFiles.has(copy)}
-                            onChange={() => handleFileSelect(copy)}
-                            aria-label={`Select ${getFileName(copy)}`}
-                          />
-                          <span className="checkbox-visual" />
-                          <span className="copy-info">
-                            <span className="file-icon" aria-hidden="true">📄</span>
-                            <span className="path-text" title={copy}>{truncatePath(copy)}</span>
-                          </span>
-                        </label>
-                        <p className="file-name">{getFileName(copy)}</p>
+                      <li key={`${copy.path}-${copyIndex}`} className="copy-item">
+                        <div className={`copy-thumb-meta ${bestImage.path === copy.path ? 'original-highlight' : ''}`}>
+                          <label className="copy-label">
+                            <input
+                              type="checkbox"
+                              checked={selectedFiles.has(copy.path)}
+                              onChange={() => handleFileSelect(copy.path)}
+                              aria-label={`Select ${getFileName(copy.path)}`}
+                            />
+                            <span className="checkbox-visual" />
+                          </label>
+
+                          {copy.preview_url ? (
+                            <a href={copy.preview_url} target="_blank" rel="noopener noreferrer">
+                              <img
+                                className="thumbnail"
+                                src={copy.preview_url}
+                                alt={getFileName(copy.path)}
+                                onError={(e) => {
+                                  const img = e.currentTarget as HTMLImageElement;
+                                  img.onerror = null;
+                                  img.src = '';
+                                  img.classList.add('placeholder');
+                                }}
+                              />
+                            </a>
+                          ) : (
+                            <div className="thumbnail placeholder" role="img" aria-label={`No preview for ${getFileName(copy.path)}`}>
+                              📄
+                            </div>
+                          )}
+
+                          <div className="copy-meta">
+                            <div className="file-name-row">
+                              <p className="file-name" title={copy.path}>{getFileName(copy.path)}</p>
+                              {bestImage.path === copy.path && <span className="badge original">Original</span>}
+                            </div>
+
+                            {typeof copy.quality_score === 'number' && (
+                              <div className="meta-row">
+                                <span className="meta resolution">Quality: {copy.quality_score}</span>
+                              </div>
+                            )}
+
+                            {copy.reason && (
+                              <div className="reason-text" role="note">{copy.reason}</div>
+                            )}
+                          </div>
+                        </div>
                       </li>
                     ))}
                   </ul>

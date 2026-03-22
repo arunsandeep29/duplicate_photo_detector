@@ -157,8 +157,8 @@ describe('API Client - getDuplicates endpoint', () => {
     const mockResponse: DuplicatesResponse = {
       groups: [
         {
-          original: '/path/original1.jpg',
-          copies: ['/path/image1.jpg', '/path/image2.jpg'],
+          original: { path: '/path/original1.jpg' },
+          copies: [{ path: '/path/image1.jpg' }, { path: '/path/image2.jpg' }],
           hash: 'abc123def456',
         },
       ],

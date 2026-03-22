@@ -1,0 +1,367 @@
+openapi: 3.0.0
+info:
+  title: Duplicate Photos Finder API
+  description: API for finding and managing duplicate photos in directories
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:5000/api
+    description: Local development server
+  - url: https://api.duplicatephotos.example.com/api
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check if the API is running and healthy
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+              example:
+                status: ok
+
+  /scan:
+    post:
+      summary: Start a new directory scan
+      description: Initiate a scan of a directory for duplicate images
+      operationId: startScan
+      tags:
+        - Scans
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - directory
+              properties:
+                directory:
+                  type: string
+                  description: Path to the directory to scan
+                  example: /Users/john/Photos
+            example:
+              directory: /Users/john/Photos
+      responses:
+        '200':
+          description: Scan started successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_id:
+                    type: string
+                    description: Unique identifier for this scan
+                    example: scan-a1b2c3d4e5f6
+                  image_count:
+                    type: integer
+                    description: Number of images found in the directory
+                    example: 42
+              example:
+                scan_id: scan-a1b2c3d4e5f6
+                image_count: 42
+        '400':
+          description: Bad request - invalid directory or missing field
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Directory does not exist
+                code: INVALID_REQUEST
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /duplicates/{scan_id}:
+    get:
+      summary: Get duplicate groups for a scan
+      description: Retrieve the duplicate image groups found during a scan
+      operationId: getDuplicates
+      tags:
+        - Duplicates
+      parameters:
+        - name: scan_id
+          in: path
+          required: true
+          description: ID of the scan to retrieve results for
+          schema:
+            type: string
+            example: scan-a1b2c3d4e5f6
+      responses:
+        '200':
+          description: Duplicate groups retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    description: Array of duplicate image groups
+                    items:
+                      $ref: '#/components/schemas/DuplicateGroup'
+              example:
+                groups:
+                  - hash: abc123def456
+                    original: photo1.jpg
+                    copies:
+                      - photo1_copy.jpg
+                      - photo1_dup.jpg
+                  - hash: xyz789uvw012
+                    original: vacation.jpg
+                    copies:
+                      - vacation_backup.jpg
+        '404':
+          description: Scan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Scan not found
+                code: SCAN_NOT_FOUND
+        '400':
+          description: Bad request - invalid scan_id format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /move-duplicates:
+    post:
+      summary: Execute move/delete operations on duplicates
+      description: Perform file operations (move or delete) on duplicate files
+      operationId: moveDuplicates
+      tags:
+        - Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - scan_id
+                - destination
+                - operations
+              properties:
+                scan_id:
+                  type: string
+                  description: ID of the scan
+                  example: scan-a1b2c3d4e5f6
+                destination:
+                  type: string
+                  description: Destination directory for moved files
+                  example: /archive
+                operations:
+                  type: array
+                  description: List of file operations to perform
+                  items:
+                    $ref: '#/components/schemas/FileOperation'
+            example:
+              scan_id: scan-a1b2c3d4e5f6
+              destination: /archive
+              operations:
+                - original: photo1.jpg
+                  target_copy: photo1_copy.jpg
+                  action: move
+                - original: photo2.jpg
+                  target_copy: photo2_dup.jpg
+                  action: delete
+      responses:
+        '200':
+          description: Operations completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moved_count:
+                    type: integer
+                    description: Number of files successfully moved
+                    example: 5
+                  failed_count:
+                    type: integer
+                    description: Number of operations that failed
+                    example: 1
+                  errors:
+                    type: array
+                    description: Details of any failures
+                    items:
+                      type: object
+                      properties:
+                        file:
+                          type: string
+                          example: photo3.jpg
+                        reason:
+                          type: string
+                          example: Permission denied
+              example:
+                moved_count: 5
+                failed_count: 1
+                errors:
+                  - file: photo3.jpg
+                    reason: Permission denied
+        '400':
+          description: Bad request - invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Missing required field
+                code: INVALID_REQUEST
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+          example: Something went wrong
+        code:
+          type: string
+          description: Machine-readable error code
+          example: INTERNAL_ERROR
+        details:
+          type: string
+          description: Optional detailed information about the error
+          example: Stack trace or additional context
+
+    DuplicateGroup:
+      type: object
+      required:
+        - hash
+        - original
+        - copies
+      properties:
+        hash:
+          type: string
+          description: Hash of the duplicate group
+          example: abc123def456
+        original:
+          type: string
+          description: Filename of the original image
+          example: photo1.jpg
+        copies:
+          type: array
+          description: List of duplicate filenames
+          items:
+            type: string
+          example:
+            - photo1_copy.jpg
+            - photo1_dup.jpg
+        details:
+          type: object
+          description: Map of copy filename to details (resolution, is_blurred, blur_score, thumbnail, hamming_distance, reason)
+          additionalProperties:
+            type: object
+            properties:
+              resolution:
+                type: array
+                items:
+                  type: integer
+                description: [width, height] of the image
+                example: [1920, 1080]
+              is_blurred:
+                type: boolean
+                description: Whether the image is classified as blurred
+                example: false
+              blur_score:
+                type: number
+                description: Blur/sharpness score (lower = more blurred)
+                example: 120.5
+              thumbnail:
+                type: string
+                description: Base64 data URI JPEG thumbnail
+                example: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...
+              hamming_distance:
+                type: integer
+                description: Hamming distance to original
+                example: 2
+              reason:
+                type: string
+                description: Human-readable reason for duplicate classification
+                example: hamming_distance=2; lower resolution
+        original_thumbnail:
+          type: string
+          description: Base64 data URI JPEG thumbnail for the original
+          example: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...
+        original_resolution:
+          type: array
+          items:
+            type: integer
+          description: [width, height] of the original image
+          example: [1920, 1080]
+        original_is_blurred:
+          type: boolean
+          description: Whether the original is classified as blurred
+          example: false
+        blurred:
+          type: array
+          description: List of copy filenames classified as blurred
+          items:
+            type: string
+          example:
+            - photo1_copy.jpg
+
+    FileOperation:
+      type: object
+      required:
+        - original
+        - target_copy
+        - action
+      properties:
+        original:
+          type: string
+          description: Filename of the original image
+          example: photo1.jpg
+        target_copy:
+          type: string
+          description: Filename of the duplicate to operate on
+          example: photo1_copy.jpg
+        action:
+          type: string
+          enum:
+            - move
+            - delete
+          description: Action to perform on the target file
+          example: move

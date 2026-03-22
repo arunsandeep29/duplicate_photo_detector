@@ -39,10 +39,19 @@ export interface ScanResponse {
  * - original_is_blurred: boolean (optional)
  * - blurred: array of file paths of blurred copies (optional)
  */
+export interface DuplicateImageInfo {
+  path: string;
+  preview_url?: string;
+  quality_score?: number;
+  reason?: string;
+}
+
 export interface DuplicateGroupFull {
-  original: string;
   hash: string;
-  copies: string[];
+  // The API now returns structured image objects for original and copies
+  original: DuplicateImageInfo;
+  copies: DuplicateImageInfo[];
+  // Backwards-compatible optional fields (may be present from older backends)
   details?: {
     [filePath: string]: {
       resolution?: [number, number];
@@ -63,11 +72,11 @@ export interface DuplicatesResponse {
   groups: DuplicateGroupFull[];
 }
 
-// Legacy type for backward compatibility (minimal group info)
+// Updated type for use throughout the frontend
 export interface DuplicateGroup {
-  original: string;
-  copies: string[];
   hash: string;
+  original: DuplicateImageInfo;
+  copies: DuplicateImageInfo[];
 }
 
 
