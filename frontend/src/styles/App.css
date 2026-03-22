@@ -1,0 +1,301 @@
+/* App Layout Styles */
+:root {
+  --primary-color: #3498db;
+  --secondary-color: #2c3e50;
+  --danger-color: #e74c3c;
+  --success-color: #27ae60;
+  --border-color: #e0e0e0;
+  --bg-light: #f5f5f5;
+  --text-dark: #2c3e50;
+  --text-muted: #666;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-light);
+  color: var(--text-dark);
+  line-height: 1.5;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+}
+
+/* App Container */
+.App {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: #ffffff;
+}
+
+/* Header Navigation */
+.header {
+  background: linear-gradient(135deg, var(--secondary-color) 0%, #1a252f 100%);
+  color: #ffffff;
+  padding: 1.5rem 2rem;
+  box-shadow: var(--shadow-md);
+  border-bottom: 4px solid var(--primary-color);
+}
+
+.header h1 {
+  margin: 0 0 0.5rem 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.header-status {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.status-healthy {
+  color: #27ae60;
+  font-weight: 600;
+}
+
+.status-unhealthy {
+  color: #f39c12;
+  font-weight: 600;
+}
+
+/* Main Content Area */
+.main-content {
+  flex: 1;
+  padding: 2rem;
+  overflow-y: auto;
+  background-color: #f9f9f9;
+}
+
+/* Container */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* Workflow Section */
+.workflow-section {
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-md);
+  border-left: 4px solid var(--primary-color);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  position: relative;
+}
+
+.workflow-section:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+
+.section-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, var(--primary-color) 0%, #2980b9 100%);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.workflow-section h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  color: var(--secondary-color);
+  font-weight: 700;
+}
+
+.component-container {
+  margin-top: 1rem;
+}
+
+.app-error-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background-color: #fff5f5;
+  border: 1px solid var(--danger-color);
+  border-radius: var(--radius-sm);
+  color: #c0392b;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  role: alert;
+}
+
+.error-icon {
+  flex-shrink: 0;
+  font-weight: bold;
+  margin-top: 0.15rem;
+}
+
+/* Start Over Section */
+.start-over-section {
+  display: flex;
+  justify-content: center;
+  border-left-color: #999;
+  padding: 1rem;
+}
+
+.start-over-button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #2c3e50;
+  border: 2px solid #ddd;
+  background: white;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.start-over-button:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.15);
+}
+
+.start-over-button:focus {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Footer */
+.footer {
+  background-color: var(--bg-light);
+  border-top: 1px solid var(--border-color);
+  padding: 1.5rem 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: auto;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .header {
+    padding: 1rem 1.5rem;
+  }
+
+  .header h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .main-content {
+    padding: 1rem;
+  }
+
+  .container {
+    gap: 1.5rem;
+  }
+
+  .workflow-section {
+    padding: 1rem;
+    border-radius: var(--radius-md);
+  }
+
+  .workflow-section h2 {
+    font-size: 1.25rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .footer {
+    padding: 1rem 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .header {
+    padding: 0.75rem 1rem;
+    border-bottom-width: 2px;
+  }
+
+  .header h1 {
+    font-size: 1.25rem;
+  }
+
+  .header-status {
+    font-size: 0.85rem;
+  }
+
+  .main-content {
+    padding: 0.75rem;
+  }
+
+  .container {
+    gap: 1rem;
+  }
+
+  .workflow-section {
+    padding: 0.75rem;
+    border-left-width: 3px;
+  }
+
+  .section-badge {
+    margin-bottom: 0.75rem;
+  }
+
+  .workflow-section h2 {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .start-over-button {
+    width: 100%;
+    justify-content: center;
+    padding: 0.65rem 1rem;
+  }
+
+  .footer {
+    padding: 0.75rem 1rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* Print Styles */
+@media print {
+  .header,
+  .footer {
+    display: none;
+  }
+
+  .main-content {
+    padding: 0;
+  }
+
+  .workflow-section {
+    box-shadow: none;
+    border: 1px solid #ddd;
+    page-break-inside: avoid;
+  }
+}
