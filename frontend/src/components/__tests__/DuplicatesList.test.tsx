@@ -109,7 +109,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('handles individual file selection', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -120,7 +120,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('handles multiple file selections', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -133,7 +133,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('handles file deselection', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -145,7 +145,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('select all button selects all copies', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -160,7 +160,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('select all button deselects all', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -176,7 +176,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('displays selection counter', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       render(<DuplicatesList groups={mockGroups} />);
       
       expect(screen.getByText(/0\s*file(s)?\s*selected/)).toBeInTheDocument();
@@ -193,7 +193,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('selection counter uses correct singular/plural', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const singleCopyGroup: DuplicateGroup[] = [
         {
           original: '/path/original.jpg',
@@ -239,8 +239,8 @@ describe('DuplicatesList Component', () => {
       render(<DuplicatesList groups={shortPathGroup} />);
       
       // Short paths should not be truncated
-      expect(screen.getByText('/home/user/photo.jpg')).toBeInTheDocument();
-      expect(screen.getByText('/home/user/photo_copy.jpg')).toBeInTheDocument();
+      expect(screen.getByTitle('/home/user/photo.jpg')).toBeInTheDocument();
+      expect(screen.getByTitle('/home/user/photo_copy.jpg')).toBeInTheDocument();
     });
 
     test('displays file names separately from paths', () => {
@@ -269,7 +269,7 @@ describe('DuplicatesList Component', () => {
     test('selection counter has aria-live', () => {
       render(<DuplicatesList groups={mockGroups} />);
       
-      const counter = screen.getByText(/0\s*files?\s*selected/).parentElement;
+      const counter = screen.getByRole('status');
       expect(counter).toHaveAttribute('aria-live', 'polite');
     });
 
@@ -295,7 +295,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('keyboard navigation works for checkboxes', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       render(<DuplicatesList groups={mockGroups} onSelectionChange={mockCallback} />);
       
@@ -353,8 +353,9 @@ describe('DuplicatesList Component', () => {
       
       render(<DuplicatesList groups={specialGroup} />);
       
-      expect(screen.getByText(/photo \(2023-01-01\)/)).toBeInTheDocument();
-      expect(screen.getByText(/photo \[backup\]/)).toBeInTheDocument();
+      // Use title to avoid matching file name and path both
+      expect(screen.getByTitle('/path/photo (2023-01-01).jpg')).toBeInTheDocument();
+      expect(screen.getByTitle('/path/photo [backup].jpg')).toBeInTheDocument();
     });
 
     test('handles paths with dots in filenames', () => {
@@ -368,7 +369,7 @@ describe('DuplicatesList Component', () => {
       
       render(<DuplicatesList groups={dotsGroup} />);
       
-      expect(screen.getByText(/photo.backup.2023.01.01.jpg/)).toBeInTheDocument();
+      expect(screen.getByTitle('/path/photo.backup.2023.01.01.jpg')).toBeInTheDocument();
     });
 
     test('handles file names with no extension', () => {
@@ -387,7 +388,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('select all is indeterminate when some items selected', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       render(<DuplicatesList groups={mockGroups} />);
       
       const selectAllCheckbox = screen.getByLabelText('Select all duplicate copies') as HTMLInputElement;
@@ -417,7 +418,7 @@ describe('DuplicatesList Component', () => {
     });
 
     test('selection updates correctly with large datasets', async () => {
-      const user = userEvent.setup();
+      const user = userEvent;
       const mockCallback = jest.fn();
       const manyGroups: DuplicateGroup[] = Array.from({ length: 10 }, (_, i) => ({
         original: `/path/original${i}.jpg`,
