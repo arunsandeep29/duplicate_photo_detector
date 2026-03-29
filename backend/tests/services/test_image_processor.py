@@ -336,10 +336,16 @@ from app.services import image_processor
 
 def create_sharp_image(size=(100, 100), color=(255, 255, 255)):
     img = Image.new("RGB", size, color)
-    for x in range(10, 90):
-        for y in range(10, 90):
+    # Draw a centered dark rectangle, but ensure coordinates fit within image
+    start_x = max(1, int(size[0] * 0.1))
+    end_x = min(size[0] - 1, int(size[0] * 0.9))
+    start_y = max(1, int(size[1] * 0.1))
+    end_y = min(size[1] - 1, int(size[1] * 0.9))
+    for x in range(start_x, end_x):
+        for y in range(start_y, end_y):
             img.putpixel((x, y), (0, 0, 0))
     return img
+
 
 def create_blurred_image(size=(100, 100)):
     img = create_sharp_image(size)

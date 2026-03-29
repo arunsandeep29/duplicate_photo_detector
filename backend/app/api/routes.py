@@ -7,7 +7,7 @@ from uuid import uuid4
 from flask import Blueprint, request, jsonify
 
 from app.utils.validators import validate_directory_path, validate_scan_id
-from app.services.image_processor import batch_compute_hashes
+from app.services.image_processor import batch_compute_embeddings
 from app.services.duplicate_finder import find_duplicates, validate_groups
 from app.services.file_manager import validate_destination, execute_move_operations
 from app.exceptions import (
@@ -106,12 +106,12 @@ def start_scan() -> tuple:
 
         validate_directory_path(directory)
 
-        # Compute hashes for all images in directory
-        logger.info(f"Starting scan for directory: {directory}")
-        hashes = batch_compute_hashes(directory, recursive=False)
+        # Compute semantic embeddings for all images in directory
+        logger.info(f"Starting semantic scan for directory: {directory}")
+        embeddings = batch_compute_embeddings(directory, recursive=False)
 
-        # Find duplicate groups
-        groups = find_duplicates(hashes)
+        # Find duplicate groups using cosine similarity
+        groups = find_duplicates(embeddings)
 
         # Validate groups
         if not validate_groups(groups):
@@ -133,17 +133,17 @@ def start_scan() -> tuple:
         scan_data = {
             "scan_id": scan_id,
             "directory": directory,
-            "image_count": len(hashes),
+            "image_count": len(embeddings),
             "groups": groups,
         }
 
         _scans_store[scan_id] = scan_data
         logger.info(
-            f"Scan complete: {scan_id} - {len(hashes)} images, " f"{len(groups)} duplicate groups"
+            f"Scan complete: {scan_id} - {len(embeddings)} images, " f"{len(groups)} duplicate groups"
         )
 
         return (
-            jsonify({"scan_id": scan_id, "image_count": len(hashes)}),
+            jsonify({"scan_id": scan_id, "image_count": len(embeddings)}),
             200,
         )
 

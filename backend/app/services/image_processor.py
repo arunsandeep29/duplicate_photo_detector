@@ -1,21 +1,28 @@
-"""Image processing module for computing perceptual hashes of JPEG images.
+"""Image processing module for semantic embeddings and perceptual hashes of images.
 
-This module provides functions to load images, compute perceptual hashes
-(content-based fingerprints), compare hashes for similarity, and batch
-process directories of images.
+This module provides functions to load images, compute semantic embeddings using CLIP,
+and compute perceptual hashes. It leverages local AI models and hardware acceleration
+(CUDA) when available for high-performance duplicate detection.
 
-The perceptual hash algorithm is designed to be robust to minor changes
-like compression, resizing, or metadata alterations while still reliably
-detecting duplicate or near-duplicate images.
+The semantic embedding approach (CLIP) is 100% local and privacy-focused,
+allowing for the detection of near-duplicate images based on visual content.
 """
 
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple, Optional
 import mimetypes
 
 import imagehash
-from PIL import Image
+import torch
+import numpy as np
+from PIL import Image, ExifTags
+from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
+
+# Define supported extensions (excluding RAW formats like .cr2, .cr3)
+SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+RAW_EXTENSIONS = {'.cr2', '.cr3', '.nef', '.arw', '.dng'}
 
 from app.exceptions import (
     InvalidImageError,
@@ -25,91 +32,71 @@ from app.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+# Hardware Acceleration: Explicitly check for CUDA to utilize the RTX 5050 GPU.
+# torch.device('cuda') is used to offload embedding generation to the GPU, 
+# providing significant speedups over CPU-based processing.
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+    logger.info("RTX 5050 GPU detected. Utilizing CUDA for hardware acceleration.")
+else:
+    device = torch.device('cpu')
+    logger.warning("CUDA not available. Falling back to CPU for embedding generation.")
+
+# Core Technology: Initialize CLIP model for semantic image embeddings.
+# clip-ViT-B-32 provides a 100% local, privacy-focused way to generate 
+# visual fingerprints (embeddings) without sending data to external APIs.
+model = SentenceTransformer('clip-ViT-B-32', device=device)
+
 
 def load_image(file_path: str) -> Image.Image:
-    """Load and validate a JPEG image from file.
+    """Load and validate a supported image from file.
 
-    This function opens a JPEG image file, validates it, and returns
-    a PIL Image object. It performs comprehensive validation including:
-    - File existence
-    - MIME type verification (image/jpeg)
-    - File readability
-    - Image integrity (can be opened and has valid format)
+    This function opens an image file (JPEG, PNG, WebP), validates it,
+    and returns a PIL Image object. It performs comprehensive validation.
+    RAW files (.cr2, .cr3) are explicitly ignored during scan.
 
     Args:
-        file_path: Absolute path to JPEG file to load.
+        file_path: Absolute path to image file to load.
 
     Returns:
         PIL.Image.Image: Opened image object ready for processing.
 
     Raises:
-        FileNotFoundError: If file does not exist at the given path.
-        InvalidImageError: If file is not a valid JPEG, is corrupted,
-                          or cannot be read as an image.
-        PermissionDeniedError: If file exists but is not readable
-                              due to permission restrictions.
-
-    Example:
-        >>> image = load_image("/path/to/photo.jpg")
-        >>> image.format
-        'JPEG'
-        >>> image.size
-        (1920, 1080)
+        FileNotFoundError: If file does not exist.
+        InvalidImageError: If file is not a supported/valid image.
     """
     path = Path(file_path)
 
-    # Check file existence
+    # Security: Reject RAW early even at load level
+    if path.suffix.lower() in RAW_EXTENSIONS:
+        raise InvalidImageError(path.name, reason="RAW files not supported for direct processing")
+
     if not path.exists():
         logger.warning(f"File not found: {file_path}")
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    # Check readability
-    if not path.is_file():
-        logger.warning(f"Path is not a file: {file_path}")
-        raise InvalidImageError(
-            path.name,
-            reason="Path is not a file",
-        )
-
     try:
-        # Check file is readable
         if not path.stat().st_size:
-            logger.warning(f"File is empty: {file_path}")
             raise InvalidImageError(path.name, reason="File is empty")
     except PermissionError as e:
-        logger.warning(f"Permission denied reading file: {file_path}")
         raise PermissionDeniedError(file_path, operation="read") from e
-
-    # Validate MIME type
-    mime_type, _ = mimetypes.guess_type(file_path)
-    if mime_type not in ("image/jpeg", None):  # None in case of unknown
-        # Still try to load, but log warning
-        logger.warning(f"Unexpected MIME type {mime_type} for {file_path}")
 
     # Load and validate image
     try:
         image = Image.open(file_path)
-        # Verify it's actually a valid image by accessing basic properties
+        # Verify it's actually a valid image
         _ = image.size
         _ = image.mode
-        # For JPEG, verify format (will raise if corrupted)
-        if image.format and image.format.upper() != "JPEG":
-            logger.warning(f"File is {image.format}, not JPEG: {file_path}")
-            raise InvalidImageError(
-                path.name,
-                reason=f"File is {image.format}, not JPEG",
-            )
-        # Force load of image data to detect corrupted images
+        
+        # Verify it's a supported format
+        if image.format and image.format.upper() not in {"JPEG", "PNG", "WEBP", "MPO"}:
+            logger.warning(f"Unsupported image format {image.format}: {file_path}")
+            raise InvalidImageError(path.name, reason=f"Unsupported format: {image.format}")
+
         image.load()
-        logger.debug(f"Successfully loaded image: {file_path}")
+        logger.debug(f"Successfully loaded {image.format} image: {file_path}")
         return image
 
-    except FileNotFoundError as e:
-        logger.warning(f"File not found: {file_path}")
-        raise FileNotFoundError(f"File not found: {file_path}") from e
-    except PermissionError as e:
-        logger.warning(f"Permission denied: {file_path}")
-        raise PermissionDeniedError(file_path, operation="read") from e
     except (Image.UnidentifiedImageError, IOError, OSError) as e:
         logger.warning(f"Invalid or corrupted image: {file_path}: {str(e)}")
         raise InvalidImageError(
@@ -387,6 +374,120 @@ def batch_compute_hashes(
     return hashes
 
 
+def compute_embedding(image: Image.Image) -> np.ndarray:
+    """Compute semantic image embedding using CLIP.
+
+    Generates a high-dimensional vector representing the visual content
+    of the image. This embedding is robust to significant changes like
+    lighting, perspective, and composition, making it ideal for finding
+    near-duplicates that perceptual hashes might miss.
+
+    Process:
+    1. Preprocess image (resize, normalize) via CLIP's internal processor
+    2. Pass through the vision transformer (clip-ViT-B-32)
+    3. Return the resulting 512-dimensional vector as a numpy array
+
+    Args:
+        image: PIL Image object to embed.
+
+    Returns:
+        np.ndarray: 512-dimensional semantic embedding vector.
+
+    Raises:
+        InvalidImageError: If embedding generation fails.
+    """
+    try:
+        # model.encode handles image preprocessing internally
+        # We ensure it returns a numpy array for easier storage/comparison
+        with torch.no_grad():
+            embedding = model.encode(image, convert_to_numpy=True)
+        return embedding
+    except Exception as e:
+        logger.error(f"Failed to compute semantic embedding: {str(e)}")
+        raise InvalidImageError(
+            "unknown",
+            reason="Failed to compute semantic embedding",
+            details=str(e),
+        ) from e
+
+
+def batch_compute_embeddings(
+    directory: str,
+    recursive: bool = False,
+    skip_errors: bool = True,
+) -> Dict[str, np.ndarray]:
+    """Compute semantic embeddings for all supported images in a directory.
+
+    Scans a directory for JPEG, PNG, and WebP images and computes a CLIP
+    embedding for each. This process is hardware-accelerated (CUDA) if available.
+    RAW files (.cr2, .cr3) are explicitly ignored.
+
+    A progress bar is displayed in the terminal via tqdm to provide
+    feedback during long-running batch operations.
+
+    Args:
+        directory: Path to directory to scan.
+        recursive: If True, scan subdirectories recursively.
+        skip_errors: If True, skip corrupted files with warning.
+
+    Returns:
+        Dict[str, np.ndarray]: Mapping of file paths to embedding vectors.
+
+    Raises:
+        DirectoryNotFoundError: If directory doesn't exist.
+        PermissionDeniedError: If directory is not readable.
+    """
+    dir_path = Path(directory)
+
+    # Validate directory existence
+    if not dir_path.exists() or not dir_path.is_dir():
+        logger.warning(f"Invalid directory: {directory}")
+        raise DirectoryNotFoundError(directory)
+
+    # Find supported image files
+    all_files = []
+    if recursive:
+        all_files = [f for f in dir_path.rglob("*") if f.is_file()]
+    else:
+        all_files = [f for f in dir_path.glob("*") if f.is_file()]
+    
+    # Filter for supported extensions and explicitly exclude RAW
+    image_files = [
+        f for f in all_files 
+        if f.suffix.lower() in SUPPORTED_EXTENSIONS 
+        and f.suffix.lower() not in RAW_EXTENSIONS
+    ]
+
+    logger.info(f"Found {len(image_files)} supported images for embedding in {directory}")
+
+    if not image_files:
+        return {}
+
+    embeddings: Dict[str, np.ndarray] = {}
+
+    # Process each file with a progress bar
+    for file_path in tqdm(image_files, desc="Generating embeddings", unit="image"):
+        try:
+            image = load_image(str(file_path))
+            embedding = compute_embedding(image)
+            embeddings[str(file_path)] = embedding
+            logger.debug(f"Embedded: {file_path}")
+
+        except (InvalidImageError, PermissionDeniedError, FileNotFoundError) as e:
+            if skip_errors:
+                logger.warning(f"Skipping file {file_path.name}: {str(e)}")
+            else:
+                raise
+        except Exception as e:
+            if skip_errors:
+                logger.warning(f"Unexpected error on {file_path}: {str(e)}")
+            else:
+                raise
+
+    logger.info(f"Successfully embedded {len(embeddings)} images from {directory}")
+    return embeddings
+
+
 # --- Additional metadata helpers ---
 import base64
 from io import BytesIO
@@ -449,16 +550,16 @@ def get_image_metadata(
     blur_threshold: float = None,
     app_config: dict = None,
 ) -> Dict[str, Any]:
-    """Collect metadata for an image file, using config if provided.
+    """Collect metadata for an image file, including EXIF and format info.
 
     Args:
         file_path: Path to image file.
         thumb_size: Thumbnail size (width, height). If None, uses config or (200,200).
-        blur_threshold: Blur threshold. If None, uses config or 100.0.
+        blur_threshold: Blur threshold. If None, uses config or 2000.0.
         app_config: Optional Flask app.config dict for config values.
 
     Returns:
-        dict: Metadata including resolution, file_size_bytes, is_blurred, blur_score, thumbnail, format.
+        dict: Metadata including resolution, file_size_bytes, is_blurred, blur_score, thumbnail, format, and has_exif.
     """
     # Use config values if provided
     if app_config is not None:
@@ -478,14 +579,29 @@ def get_image_metadata(
         "blur_score": None,
         "thumbnail": "",
         "format": None,
+        "has_exif": False,
     }
 
     try:
         path = Path(file_path)
+        
+        # Security: Skip RAW files explicitly to avoid processing heavy formats
+        if path.suffix.lower() in RAW_EXTENSIONS:
+            logger.debug(f"Skipping RAW metadata extraction for: {file_path}")
+            return meta
+
         image = load_image(file_path)
 
-        w, h = image.size
-        meta["resolution"] = (w, h)
+        meta["format"] = image.format
+        meta["resolution"] = image.size
+        
+        # Check for EXIF metadata presence (high signal for original images)
+        try:
+            exif = image.getexif()
+            meta["has_exif"] = bool(exif)
+        except Exception:
+            meta["has_exif"] = False
+
         try:
             meta["file_size_bytes"] = path.stat().st_size
         except Exception:
@@ -495,7 +611,6 @@ def get_image_metadata(
         meta["is_blurred"] = is_blur
         meta["blur_score"] = blur_score
         meta["thumbnail"] = generate_thumbnail_base64(image, size=thumb_size)
-        meta["format"] = image.format
     except Exception as e:
         logger.warning(f"Failed to get metadata for {file_path}: {str(e)}")
 
@@ -546,77 +661,67 @@ def compute_quality_score(
     resolution: Optional[tuple] = None,
     file_size_bytes: Optional[int] = None,
     sharpness: Optional[float] = None,
+    has_exif: bool = False,
+    file_format: str = "JPEG"
 ) -> float:
-    """Combine resolution, file size, and sharpness into a single quality score.
+    """Advanced Quality Scoring to identify the 'Source' image.
 
-    Formula (weighted, normalized):
-
-    - resolution_score = log10(width * height + 1)
-    - size_score = log10(file_size_bytes + 1)
-    - sharpness_score = log10(sharpness + 1)
-
-    Combined quality_score =  (w_res * resolution_score) + (w_size * size_score) + (w_sharp * sharpness_score)
-
-    Weights chosen: w_res=0.5, w_size=0.2, w_sharp=0.3. These reflect a bias
-    toward image resolution as the primary quality signal, with file size and
-    sharpness as secondary signals. The log10 normalization reduces dominance of
-    very large values and keeps the score in a reasonable numeric range.
-
-    If image is provided but resolution/sharpness/file_size are not, they will
-    be computed. Missing values default to 0.
+    This improved formula rewards:
+    1.  Data Integrity (EXIF presence: +2.0)
+    2.  Visual Fidelity (Resolution 40%, Sharpness 30%)
+    3.  Format Efficiency (PNG/WebP priority)
+    4.  Raw Data (File size 10%)
 
     Args:
-        image: Optional PIL Image to compute missing metrics from.
-        resolution: Optional (width, height)
-        file_size_bytes: Optional file size in bytes
-        sharpness: Optional sharpness score
+        image: Optional PIL Image (currently unused for direct score)
+        resolution: (width, height)
+        file_size_bytes: Size in bytes
+        sharpness: Precomputed sharpness score
+        has_exif: Boolean indicating if metadata exists
+        file_format: The image format (e.g., 'PNG', 'JPEG')
 
     Returns:
         float: Combined quality score.
     """
     import math
 
-    # Compute missing values if image provided
-    res_w = res_h = None
-    if resolution is not None:
+    # Calculate base metrics
+    res_w = res_h = 0
+    if resolution:
         try:
             res_w, res_h = int(resolution[0]), int(resolution[1])
         except Exception:
-            res_w = res_h = None
-    if (res_w is None or res_h is None) and image is not None:
-        try:
-            res_w, res_h = image.size
-        except Exception:
-            res_w = res_h = None
+            res_w = res_h = 0
+    
+    area = res_w * res_h
+    size_val = file_size_bytes or 0
+    sharp = sharpness or 0.0
 
-    area = 0
-    if res_w and res_h:
-        area = int(res_w) * int(res_h)
+    # 1. Fidelity Scores (Log-normalized to reduce outliers)
+    # Resolution remains a strong signal for original quality
+    res_score = math.log10(area + 1) * 0.4
+    # Sharpness indicates lack of blur or heavy compression artifacts
+    sharp_score = math.log10(sharp + 1) * 0.3
+    # File size acts as a proxy for bitrate/detail in lossy formats
+    size_score = math.log10(size_val + 1) * 0.1
 
-    size_val = int(file_size_bytes or 0)
+    # 2. Metadata Bonus (Extremely high signal for non-forwarded originals)
+    exif_bonus = 2.0 if has_exif else 0.0
 
-    sharp = sharpness if sharpness is not None else None
-    if sharp is None and image is not None:
-        try:
-            sharp = compute_sharpness(image)
-        except Exception:
-            sharp = 0.0
-    if sharp is None:
-        sharp = 0.0
+    # 3. Format Multiplier (Reward more efficient or lossless formats)
+    format_map = {
+        'PNG': 1.2,   # Lossless
+        'WEBP': 1.1,  # Efficient
+        'JPEG': 1.0,  # Baseline
+        'MPO': 1.0
+    }
+    format_mult = format_map.get(str(file_format).upper(), 1.0)
 
-    # Normalize via log10 to reduce skew
-    resolution_score = math.log10(area + 1)
-    size_score = math.log10(size_val + 1)
-    sharpness_score = math.log10(max(float(sharp), 0.0) + 1)
-
-    # Weights
-    w_res = 0.5
-    w_size = 0.2
-    w_sharp = 0.3
-
-    quality_score = (w_res * resolution_score) + (w_size * size_score) + (w_sharp * sharpness_score)
-    # Scale to a round number
-    return float(quality_score)
+    # 4. Final Aggregation
+    # We add the signals and multiply by format efficiency
+    final_score = (res_score + sharp_score + size_score + exif_bonus) * format_mult
+    
+    return round(float(final_score), 3)
 
 
 def _thumbnail_cache_path(cache_dir: str, path: str, mtime: float) -> str:

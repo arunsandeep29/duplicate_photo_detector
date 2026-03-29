@@ -1,134 +1,88 @@
-"""Duplicate image detection service.
+"""Duplicate image detection service using semantic embeddings.
 
 This module finds groups of duplicate or near-duplicate images by analyzing
-their perceptual hashes. It uses clustering and union-find algorithms to
-efficiently group similar images together.
+their semantic embeddings (CLIP). It uses cosine similarity and clustering
+to group visually similar images together.
 """
 
 import logging
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Any
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 def find_duplicates(
-    hashes: Dict[str, str],
-    similarity_threshold: int = 5,
-) -> List[Dict[str, object]]:
-    """Find groups of duplicate images from perceptual hashes.
+    embeddings: Dict[str, np.ndarray],
+    similarity_threshold: float = 0.95,
+) -> List[Dict[str, Any]]:
+    """Find groups of duplicate images using semantic embeddings and cosine similarity.
 
-    This function analyzes a dictionary of file paths and their perceptual
-    hashes to identify groups of duplicate or near-duplicate images. It uses
-    an efficient clustering algorithm to group similar hashes together.
+    This function analyzes a dictionary of file paths and their CLIP embeddings
+    to identify groups of duplicate or near-duplicate images. It uses cosine
+    similarity to measure visual relatedness.
 
     The algorithm:
-    1. Groups files with identical hashes (exact matches)
-    2. Uses graph-based clustering to merge groups with similar hashes
-    3. Uses union-find to track connected components
-    4. Returns groups with 2+ files (ignores unique images)
-
-    Time complexity: O(n²) worst-case for hash comparison, where n is number
-    of unique hashes. In practice much better due to early pruning.
+    1. Compares all pairs of embeddings using cosine similarity.
+    2. Groups images with similarity >= threshold (default 0.95).
+    3. Uses union-find to track connected components (transitive groups).
+    4. Ranks images within each group by quality (resolution, sharpness, etc.).
+    5. Returns groups with 2+ files (ignores unique images).
 
     Args:
-        hashes: Dictionary mapping file paths to hash strings.
-                Format: {"/path/to/image.jpg": "a1b2c3d4e5f6a1b2"}
-        similarity_threshold: Maximum Hamming distance to consider images
-                             similar. Default 5. Must be 0-64.
+        embeddings: Dictionary mapping file paths to numpy embedding vectors.
+                   Format: {"/path/to/image.jpg": np.array([...])}
+        similarity_threshold: Minimum cosine similarity (0.0 to 1.0) to consider
+                             images as duplicates. Default 0.95.
 
     Returns:
-        List of duplicate group dictionaries. Each group has:
-            {
-                "original": "/path/to/original.jpg",
-                "hash": "a1b2c3d4e5f6a1b2",
-                "copies": ["/path/to/copy1.jpg", "/path/to/copy2.jpg"]
-            }
-
-        Returns empty list if:
-        - Input hashes dict is empty
-        - No duplicates found (all images unique)
-        - Only single instance of each image
-
-    Raises:
-        ValueError: If hashes dict is empty.
-        ValueError: If similarity_threshold is outside valid range (0-64).
-
-    Example:
-        >>> hashes = {
-        ...     "photo1.jpg": "a1b2c3d4e5f6a1b2",
-        ...     "photo1_copy.jpg": "a1b2c3d4e5f6a1b2",  # Identical
-        ...     "photo2.jpg": "f6e5d4c3b2a10000",
-        ...     "photo2_dup.jpg": "f6e5d4c3b2a10001",   # 1 bit different
-        ... }
-        >>> groups = find_duplicates(hashes)
-        >>> len(groups)
-        2
-        >>> groups[0]["original"]
-        'photo1.jpg'
-        >>> len(groups[0]["copies"])
-        1
+        List of duplicate group dictionaries with rich metadata and legacy fields.
     """
-    if not hashes:
-        logger.warning("Empty hashes dictionary provided")
-        raise ValueError("Hashes dictionary cannot be empty")
+    if not embeddings:
+        logger.warning("Empty embeddings dictionary provided")
+        raise ValueError("Embeddings dictionary cannot be empty")
 
-    if similarity_threshold < 0 or similarity_threshold > 64:
-        raise ValueError("Similarity threshold must be between 0 and 64")
+    if not (0.0 <= similarity_threshold <= 1.0):
+        raise ValueError("Similarity threshold must be between 0.0 and 1.0")
 
-    # Import here to avoid circular imports
-    from app.services.image_processor import compare_hashes
+    file_list = list(embeddings.keys())
+    file_list_len = len(file_list)
+    logger.info(f"Finding duplicates in {file_list_len} images using cosine similarity")
 
-    logger.info(f"Finding duplicates in {len(hashes)} images")
+    # Step 1: Use union-find for clustering similar embeddings
+    file_to_group = {i: i for i in range(file_list_len)}
 
-    # Step 1: Group by exact hash matches
-    exact_groups: Dict[str, List[str]] = {}
-    for file_path, hash_value in hashes.items():
-        if hash_value not in exact_groups:
-            exact_groups[hash_value] = []
-        exact_groups[hash_value].append(file_path)
-
-    # Step 2: Use union-find for clustering similar hashes
-    file_to_group = {}  # Maps file to its group ID
-    groups_list = []  # List of groups, each is a set of file indices
-
-    # Create initial groups from exact matches
-    file_list = list(hashes.keys())
-    for file_idx, file_path in enumerate(file_list):
-        file_to_group[file_idx] = file_idx
-        groups_list.append({file_idx})
-
-    # Union-find helper functions
     def find_parent(idx: int) -> int:
-        """Find the root parent of a group."""
         if file_to_group[idx] != idx:
             file_to_group[idx] = find_parent(file_to_group[idx])
         return file_to_group[idx]
 
     def union(idx1: int, idx2: int) -> None:
-        """Union two groups."""
         parent1 = find_parent(idx1)
         parent2 = find_parent(idx2)
         if parent1 != parent2:
             file_to_group[parent1] = parent2
 
-    # Compare all pairs of hashes and union similar ones
-    file_list_len = len(file_list)
+    # Pre-normalize embeddings for faster cosine similarity (dot product)
+    normalized_embeddings = {}
+    for path, vec in embeddings.items():
+        norm = np.linalg.norm(vec)
+        normalized_embeddings[path] = vec / norm if norm > 0 else vec
+
+    # Compare all pairs (O(n^2) approach, suitable for local directories)
     for i in range(file_list_len):
         for j in range(i + 1, file_list_len):
-            hash_i = hashes[file_list[i]]
-            hash_j = hashes[file_list[j]]
+            path_i = file_list[i]
+            path_j = file_list[j]
+            
+            # Cosine similarity of normalized vectors is just the dot product
+            similarity = np.dot(normalized_embeddings[path_i], normalized_embeddings[path_j])
+            
+            if similarity >= similarity_threshold:
+                union(i, j)
+                logger.debug(f"Grouped {path_i} and {path_j} (similarity={similarity:.4f})")
 
-            try:
-                is_similar, distance = compare_hashes(
-                    hash_i, hash_j, similarity_threshold=similarity_threshold
-                )
-                if is_similar:
-                    union(i, j)
-                    logger.debug(f"Grouped {file_list[i]} and {file_list[j]} (distance={distance})")
-            except ValueError:
-                logger.warning(f"Failed to compare hashes: {hash_i} and {hash_j}")
-
-    # Step 3: Collect merged groups
+    # Step 2: Collect merged groups
     merged_groups: Dict[int, List[str]] = {}
     for file_idx, file_path in enumerate(file_list):
         parent = find_parent(file_idx)
@@ -136,127 +90,109 @@ def find_duplicates(
             merged_groups[parent] = []
         merged_groups[parent].append(file_path)
 
-    # Step 4: Format output
+    # Step 3: Format output and enrich with metadata
     result = []
+    from app.services.image_processor import (
+        get_image_metadata,
+        compute_quality_score,
+        compute_sharpness,
+        load_image
+    )
+    from flask import current_app
+    from urllib.parse import quote_plus
+
     for group_files in merged_groups.values():
-        if len(group_files) >= 2:
-            # Use quality scoring to pick the original. Compute metadata for each file.
-            from app.services.image_processor import (
-                get_image_metadata,
-                compute_quality_score,
-                compute_sharpness,
+        if len(group_files) < 2:
+            continue
+
+        # Gather metadata and scores for each file in the group
+        file_metas = {}
+        for f in group_files:
+            try:
+                app_config = getattr(current_app, "config", None)
+            except Exception:
+                app_config = None
+            
+            meta = get_image_metadata(f, app_config=app_config)
+            
+            # Compute sharpness separately for better accuracy
+            sharp = None
+            try:
+                img_obj = load_image(f)
+                sharp = compute_sharpness(img_obj)
+            except Exception:
+                sharp = 0.0
+            
+            meta["sharpness"] = sharp
+            score = compute_quality_score(
+                resolution=meta.get("resolution"),
+                file_size_bytes=meta.get("file_size_bytes"),
+                sharpness=meta.get("sharpness"),
+                has_exif=meta.get("has_exif", False),
+                file_format=meta.get("format", "JPEG")
             )
-            from flask import current_app
-            from urllib.parse import quote_plus
+            meta["quality_score"] = score
+            file_metas[f] = meta
 
-            # Gather metadata for files in this group (cache, only once per file)
-            file_metas = {}
-            for f in group_files:
-                if f not in file_metas:
-                    try:
-                        app_config = getattr(current_app, "config", None)
-                    except Exception:
-                        app_config = None
-                    try:
-                        meta = get_image_metadata(f, app_config=app_config)
-                    except Exception:
-                        meta = {"resolution": None, "is_blurred": False, "blur_score": None, "thumbnail": "", "file_size_bytes": None}
-                    # Compute sharpness separately (more accurate when cv2 available)
-                    try:
-                        from app.services.image_processor import load_image
+        # Rank files: highest quality score first
+        sorted_files = sorted(
+            group_files,
+            key=lambda p: (-file_metas[p]["quality_score"], p),
+        )
+        
+        # Domain heuristic: prefer non-blurred images as the 'original'
+        original = sorted_files[0]
+        non_blurred = [p for p in sorted_files if not file_metas[p].get("is_blurred")]
+        if non_blurred:
+            original = non_blurred[0]
 
-                        img_obj = None
-                        try:
-                            img_obj = load_image(f)
-                        except Exception:
-                            img_obj = None
-                        sharp = None
-                        if img_obj is not None:
-                            try:
-                                sharp = compute_sharpness(img_obj)
-                            except Exception:
-                                sharp = None
-                    except Exception:
-                        sharp = None
+        copies = [p for p in group_files if p != original]
+        
+        # Build detailed information for each file in the group
+        details = {}
+        legacy_details = {}
+        for p in group_files:
+            meta = file_metas[p]
+            
+            # Calculate similarity to original for the reason string
+            sim_to_orig = np.dot(normalized_embeddings[original], normalized_embeddings[p])
+            
+            reason = "highest quality" if p == original else f"similarity={sim_to_orig:.4f}"
+            res = meta.get("resolution")
+            size = meta.get("file_size_bytes")
+            sharp = meta.get("sharpness")
+            reason_text = f"{reason}; res={res}; size={size}; sharp={round(sharp, 2) if sharp else 'N/A'}"
 
-                    meta["sharpness"] = sharp
-                    # Compute quality score using available metrics
-                    score = compute_quality_score(
-                        image=None,
-                        resolution=meta.get("resolution"),
-                        file_size_bytes=meta.get("file_size_bytes"),
-                        sharpness=meta.get("sharpness"),
-                    )
-                    meta["quality_score"] = score
-                    file_metas[f] = meta
+            details[p] = {
+                "path": p,
+                "preview_url": f"/api/preview?path={quote_plus(p)}",
+                "quality_score": meta["quality_score"],
+                "reason": reason_text,
+            }
+            
+            # Maintain legacy details for backward compatibility
+            legacy_details[p] = {
+                "resolution": res,
+                "is_blurred": bool(meta.get("is_blurred")),
+                "blur_score": meta.get("blur_score"),
+                "thumbnail": meta.get("thumbnail", ""),
+                "similarity": float(sim_to_orig),
+                "reason": reason_text,
+            }
 
-            # Choose original = file with highest quality_score. Tie-break lexicographically
-            # Sort by quality_score desc, then path asc to break ties predictably
-            sorted_files = sorted(
-                group_files,
-                key=lambda p: (-file_metas.get(p, {}).get("quality_score", 0.0), p),
-            )
-            original = sorted_files[0]
-            copies = [p for p in group_files if p != original]
-
-            # Build output objects with preview_url and reason strings
-            details = {}
-            blurred_list = []
-            for p in group_files:
-                meta = file_metas.get(p, {})
-                if meta.get("is_blurred"):
-                    blurred_list.append(p)
-
-                # compute hamming distance for additional reason
-                try:
-                    from app.services.image_processor import compare_hashes
-                    _, distance = compare_hashes(hashes[original], hashes[p])
-                except Exception:
-                    distance = None
-
-                # Build reason string: include hamming_distance and individual metric breakdown
-                reason_parts = []
-                if p == original:
-                    reason_parts.append("chosen as highest quality")
-                else:
-                    reason_parts.append("duplicate of original")
-
-                if distance is not None:
-                    reason_parts.append(f"hamming_distance={distance}")
-
-                res = meta.get("resolution")
-                size_b = meta.get("file_size_bytes")
-                sharp = meta.get("sharpness")
-                reason_parts.append(
-                    f"resolution={res}; size={size_b}; sharpness={round(sharp,2) if sharp is not None else 'N/A'}"
-                )
-
-                reason_text = "; ".join(reason_parts)
-
-                details[p] = {
-                    "path": p,
-                    "preview_url": f"/api/preview?path={quote_plus(p)}",
-                    "quality_score": meta.get("quality_score"),
-                    "reason": reason_text,
-                }
-
-            # Build group with legacy fields plus new structured info.
-            group_original_info = details[original]
-            group_copies_info = [details[c] for c in copies]
-
-            # Legacy fields (keep backward compatibility)
-            legacy_original = original
-            legacy_copies = copies
-            legacy_hash = hashes.get(original)
-
-            result.append({
-                "original": legacy_original,  # legacy: string path
-                "hash": legacy_hash,
-                "copies": legacy_copies,
-                # New structured additions
-                "original_info": group_original_info,
-                "copies_info": group_copies_info,
-            })
+        group_entry = {
+            "original": original,
+            "hash": "semantic-v1",  # Placeholder for legacy 'hash' field
+            "copies": copies,
+            "original_info": details[original],
+            "copies_info": [details[c] for c in copies],
+            "details": legacy_details,
+            "original_thumbnail": file_metas[original].get("thumbnail", ""),
+            "original_resolution": file_metas[original].get("resolution"),
+            "original_is_blurred": bool(file_metas[original].get("is_blurred")),
+            "blurred": [p for p in group_files if p != original],
+        }
+        result.append(group_entry)
 
     logger.info(f"Found {len(result)} duplicate groups")
     return result
